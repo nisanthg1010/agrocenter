@@ -11,7 +11,7 @@ const app = express();
 // --- FIX CORS HERE ---
 app.use(
   cors({
-    origin: "https://agrocenter.onrender.com", // your React frontend URL
+    origin: "https://agro-center.netlify.app/", // your React frontend URL
     credentials: true,
   })
 );
@@ -35,4 +35,5 @@ app.get("/", (req, res) => {
 
 // Start server
 app.listen(5000, () => console.log("Server running on port 5000"));
+
 
