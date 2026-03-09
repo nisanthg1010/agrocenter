@@ -7,7 +7,9 @@ const userSchema = new mongoose.Schema({
   password: { type: String, required: true },
   role: { type: String, default: "user" },
   phone: { type: String },
-  address: { type: String }
+  address: { type: String },
+  resetPasswordToken: { type: String },
+  resetPasswordExpires: { type: Date }
 });
 
 // Hash password before save

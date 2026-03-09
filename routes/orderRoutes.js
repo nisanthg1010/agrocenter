@@ -1,7 +1,9 @@
 const express = require("express");
 const router = express.Router();
 const Order = require("../models/Order");
+const User = require("../models/User");
 const { protect, authorize } = require("../middleware/authMiddleware");
+const { sendBillEmail } = require("../utils/emailService");
 
 
 // ------------------------------------------------------------
@@ -15,6 +17,7 @@ router.post("/", protect, async (req, res) => {
       return res.status(400).json({ message: "Order items required" });
     }
 
+    // Create order
     const order = await Order.create({
       userId: req.user._id,
       shippingAddress,
@@ -24,11 +27,21 @@ router.post("/", protect, async (req, res) => {
       stripePaymentId,
     });
 
+    // Get customer details
+    const customer = await User.findById(req.user._id);
+
+    // Send bill emails to customer, shopkeeper, and delivery agent
+    const emailResult = await sendBillEmail(
+      order,
+      customer.email,
+      customer.name
+    );
+
     res.status(201).json({
       message: "Order placed successfully",
       order,
+      emailStatus: emailResult,
     });
-
   } catch (error) {
     console.error("Order Create Error:", error);
     res.status(500).json({ message: "Server error" });
@@ -107,6 +120,50 @@ router.get("/:id", protect, async (req, res) => {
     res.json(order);
   } catch (error) {
     console.error("Error fetching order:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ------------------------------------------------------------
+// USER CANCEL ORDER
+// ------------------------------------------------------------
+router.put("/:id/cancel", protect, async (req, res) => {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      userId: req.user._id,
+    });
+
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    if (["shipped", "delivered", "cancelled"].includes(order.orderStatus)) {
+      return res.status(400).json({
+        message: "Order cannot be cancelled at this stage",
+      });
+    }
+
+    order.orderStatus = "cancelled";
+    await order.save();
+
+    res.json({ message: "Order cancelled", order });
+  } catch (error) {
+    console.error("Order Cancel Error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// ------------------------------------------------------------
+// ADMIN DELETE ORDER
+// ------------------------------------------------------------
+router.delete("/:id", protect, authorize("admin"), async (req, res) => {
+  try {
+    const order = await Order.findById(req.params.id);
+    if (!order) return res.status(404).json({ message: "Order not found" });
+
+    await order.deleteOne();
+    res.json({ message: "Order deleted" });
+  } catch (error) {
+    console.error("Order Delete Error:", error);
     res.status(500).json({ message: "Server error" });
   }
 });

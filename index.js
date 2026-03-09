@@ -2,6 +2,7 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const connectDB = require("./config/db");
+const ensureDefaultUsers = require("./utils/ensureDefaultUsers");
 
 dotenv.config();
 connectDB();
@@ -33,5 +34,9 @@ app.get("/", (req, res) => {
   res.send("API Running");
 });
 
-// Start server
-app.listen(5000, () => console.log("Server running on port 5000"));
+// Seed default users then start server
+ensureDefaultUsers()
+  .catch((err) => console.error("Default user seed failed:", err))
+  .finally(() => {
+    app.listen(5000, () => console.log("Server running on port 5000"));
+  });
