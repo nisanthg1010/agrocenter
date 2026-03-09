@@ -26,6 +26,8 @@ app.use(
       return callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 
@@ -46,9 +48,11 @@ app.get("/", (req, res) => {
   res.send("API Running");
 });
 
+const PORT = process.env.PORT || 5000;
+
 // Seed default users then start server
 ensureDefaultUsers()
   .catch((err) => console.error("Default user seed failed:", err))
   .finally(() => {
-    app.listen(5000, () => console.log("Server running on port 5000"));
+    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   });
