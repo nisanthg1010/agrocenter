@@ -32,13 +32,14 @@ app.use(
 );
 
 // Middleware
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
 // Routes
 app.use("/api/auth", require("./routes/authRoutes")); //user login
 app.use("/api/products", require("./routes/productRoutes")); //product 
 app.use("/api/orders", require("./routes/orderRoutes")); //order
 app.use("/api/users", require("./routes/userRoutes"));//user CRUD
+app.use("/api/ai", require("./routes/aiRoutes")); // AI proxy
 
 
 

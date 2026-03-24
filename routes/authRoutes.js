@@ -8,14 +8,55 @@ const nodemailer = require("nodemailer");
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Email transporter configuration
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASSWORD,
-  },
-});
+const getEmailPassword = () =>
+  process.env.EMAIL_PASSWORD ||
+  process.env.EMAIL_PASS ||
+  process.env.EMAIL_APP_PASSWORD;
+
+const getEmailPort = () => {
+  const parsedPort = Number(process.env.EMAIL_PORT);
+  return Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 587;
+};
+
+const getEmailHost = () => process.env.EMAIL_HOST || "smtp.gmail.com";
+
+const getEmailFrom = () =>
+  process.env.EMAIL_FROM || `"Ritika Agro Center" <${process.env.EMAIL_USER}>`;
+
+const isEmailConfigured = () =>
+  Boolean(process.env.EMAIL_USER && getEmailPassword());
+
+const createTransporter = () =>
+  nodemailer.createTransport({
+    host: getEmailHost(),
+    port: getEmailPort(),
+    secure: getEmailPort() === 465,
+    requireTLS: getEmailPort() !== 465,
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: getEmailPassword(),
+    },
+    connectionTimeout: 15000,
+    greetingTimeout: 15000,
+    socketTimeout: 20000,
+  });
+
+const sendMailWithTimeout = async (mailOptions, timeoutMs = 12000) => {
+  const transporter = createTransporter();
+  let timeoutHandle;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new Error("Email send timed out")),
+      timeoutMs
+    );
+  });
+
+  try {
+    return await Promise.race([transporter.sendMail(mailOptions), timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
+};
 
 // TEST ROUTE
 router.get("/test", (req, res) => {
@@ -202,7 +243,7 @@ router.post("/forgot-password", async (req, res) => {
 
     // Email content
     const mailOptions = {
-      from: `"Ritika Agro Center" <${process.env.EMAIL_USER}>`,
+      from: getEmailFrom(),
       to: user.email,
       subject: "🔐 Password Reset Request - Ritika Agro Center",
       html: `
@@ -246,9 +287,28 @@ router.post("/forgot-password", async (req, res) => {
       `,
     };
 
-    await transporter.sendMail(mailOptions);
+    // Do not fail the endpoint if SMTP credentials are missing in deployment.
+    if (!isEmailConfigured()) {
+      console.error(
+        "Forgot Password: EMAIL_USER/EMAIL_PASSWORD is not configured."
+      );
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`[DEV] Password reset link for ${user.email}: ${resetURL}`);
+      }
+      return res.json({
+        message: "If the email exists, a reset link has been sent.",
+      });
+    }
 
-    res.json({ message: "Password reset link sent to your email!" });
+    // Respond immediately so UI never waits on SMTP provider/network latency.
+    res.json({ message: "If the email exists, a reset link has been sent." });
+
+    sendMailWithTimeout(mailOptions).catch((mailError) => {
+      console.error("Forgot Password Email Error:", mailError);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`[DEV] Password reset link for ${user.email}: ${resetURL}`);
+      }
+    });
 
   } catch (error) {
     console.error("Forgot Password Error:", error);
@@ -285,26 +345,32 @@ router.post("/reset-password/:token", async (req, res) => {
     user.resetPasswordExpires = undefined;
     await user.save();
 
-    // Send confirmation email
-    const confirmMailOptions = {
-      from: `"Ritika Agro Center" <${process.env.EMAIL_USER}>`,
-      to: user.email,
-      subject: "✅ Password Changed Successfully - Ritika Agro Center",
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-          <div style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); border-radius: 10px; padding: 30px; text-align: center;">
-            <h1 style="color: white; margin: 0;">✅ Password Changed!</h1>
+    // Send confirmation email when SMTP is configured.
+    if (isEmailConfigured()) {
+      const confirmMailOptions = {
+        from: getEmailFrom(),
+        to: user.email,
+        subject: "✅ Password Changed Successfully - Ritika Agro Center",
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <div style="background: linear-gradient(135deg, #16a34a 0%, #15803d 100%); border-radius: 10px; padding: 30px; text-align: center;">
+              <h1 style="color: white; margin: 0;">✅ Password Changed!</h1>
+            </div>
+            <div style="background: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+              <p style="color: #333; font-size: 16px;">Hello <strong>${user.name}</strong>,</p>
+              <p style="color: #555;">Your password has been successfully changed. You can now login with your new password.</p>
+              <p style="color: #888; font-size: 12px;">If you did not make this change, please contact us immediately at <a href="mailto:ritikaagrocenter2024@gmail.com">ritikaagrocenter2024@gmail.com</a></p>
+            </div>
           </div>
-          <div style="background: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-            <p style="color: #333; font-size: 16px;">Hello <strong>${user.name}</strong>,</p>
-            <p style="color: #555;">Your password has been successfully changed. You can now login with your new password.</p>
-            <p style="color: #888; font-size: 12px;">If you did not make this change, please contact us immediately at <a href="mailto:ritikaagrocenter2024@gmail.com">ritikaagrocenter2024@gmail.com</a></p>
-          </div>
-        </div>
-      `,
-    };
+        `,
+      };
 
-    await transporter.sendMail(confirmMailOptions);
+      try {
+        await sendMailWithTimeout(confirmMailOptions);
+      } catch (mailError) {
+        console.error("Reset Password Confirmation Email Error:", mailError);
+      }
+    }
 
     res.json({ message: "Password reset successful! You can now login." });
 
