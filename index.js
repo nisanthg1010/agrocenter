@@ -5,9 +5,23 @@ const connectDB = require("./config/db");
 const ensureDefaultUsers = require("./utils/ensureDefaultUsers");
 
 dotenv.config();
-connectDB();
 
 const app = express();
+const isServerless = Boolean(process.env.VERCEL);
+
+const initApp = async () => {
+  await connectDB();
+
+  // Seeding should run only on long-lived server startup, not on serverless invocations.
+  if (!isServerless) {
+    await ensureDefaultUsers();
+  }
+};
+
+const initPromise = initApp().catch((error) => {
+  console.error("App initialization failed:", error);
+  throw error;
+});
 
 // --- CORS Configuration ---
 const allowedOrigins = [
@@ -33,6 +47,14 @@ app.use(
 
 // Middleware
 app.use(express.json({ limit: "10mb" }));
+app.use(async (req, res, next) => {
+  try {
+    await initPromise;
+    next();
+  } catch (error) {
+    res.status(500).json({ message: "Server initialization failed" });
+  }
+});
 
 // Routes
 app.use("/api/auth", require("./routes/authRoutes")); //user login
@@ -51,9 +73,14 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-// Seed default users then start server
-ensureDefaultUsers()
-  .catch((err) => console.error("Default user seed failed:", err))
-  .finally(() => {
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-  });
+if (!isServerless && require.main === module) {
+  initPromise
+    .catch(() => {
+      // Keep running so startup error is visible in logs and app can recover on retry.
+    })
+    .finally(() => {
+      app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+    });
+}
+
+module.exports = app;
